@@ -9,14 +9,16 @@ This code provisions a basic AWS infrastructure setup, including a private EC2 i
 2. **A private subnet** (`10.0.1.0/24`) in a user-defined availability zone.
 3. **A route table and its association** (no Internet Gateway or NAT, hence private-only access).
 4. **A security group** that allows only outbound traffic.
-5. **An IAM role** for EC2 to read from S3.
-6. **An EC2 instance** with no public IP in the private subnet.
-7. **A secure S3 bucket** with:
+5. **Secure Access to S3**: S3 VPC endpoint is used to access S3 privately without needing a NAT Gateway.
+6. **Secure SSH Key**: A TLS-generated private key is saved securely with 0400 permissions.
+7. **No Credentials**: No secrets or keys are hardcoded; all permissions handled via IAM roles.
+8. **An EC2 instance** with no public IP in the private subnet.
+9. **A secure S3 bucket** with:
    - Versioning enabled
    - Server-side encryption (SSE) using AES256
    - Public access completely blocked
    - A unique name using a random suffix
-8. **An output** displaying the final S3 bucket name.
+10. **An output** displaying the final S3 bucket and instance name
 
 ---
 

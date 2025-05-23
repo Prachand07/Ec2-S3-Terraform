@@ -31,11 +31,20 @@ resource "aws_subnet" "private" {
 # Creating a Route Table
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "My route table"
+  }
 }
 
 resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private.id
   route_table_id = aws_route_table.private.id
+}
+
+resource "aws_vpc_endpoint" "connect" {
+  vpc_id          = aws_vpc.main.id
+  service_name    = "com.amazonaws.${var.region}.s3"
+  route_table_ids = [aws_route_table.private.id]
 }
 
 # Security Group
@@ -51,6 +60,7 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
+#Creating IAM Roles
 #Allowing Ec2 to assume role
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-read-s3-role"
@@ -75,9 +85,12 @@ resource "aws_iam_role_policy" "s3_read_only" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect   = "Allow",
-      Action   = ["s3:GetObject", "s3:ListBucket", "s3:Describe*"],
-      Resource = ["arn:aws:s3:::*", "arn:aws:s3:::*/*"]
+      Effect = "Allow",
+      Action = ["s3:GetObject", "s3:ListBucket"],
+      "Resource" : [
+        aws_s3_bucket.my_bucket.arn,
+        "${aws_s3_bucket.my_bucket.arn}/*"
+      ]
     }]
   })
 }
@@ -85,6 +98,23 @@ resource "aws_iam_role_policy" "s3_read_only" {
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "s3-read"
   role = aws_iam_role.ec2_role.name
+}
+
+#Creating a key pair
+resource "tls_private_key" "ec2_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "my_key" {
+  key_name   = "ec2cone"
+  public_key = tls_private_key.ec2_key.public_key_openssh
+}
+
+resource "local_file" "private_key" {
+  content         = tls_private_key.ec2_key.private_key_pem
+  filename        = "${path.module}/${aws_key_pair.my_key.key_name}.pem"
+  file_permission = "0400"
 }
 
 # Creating the ec2 instance
@@ -95,11 +125,19 @@ resource "aws_instance" "ec2" {
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   associate_public_ip_address = false
+  key_name                    = aws_key_pair.my_key.key_name
 
   tags = {
     Name = "MyEC2"
   }
+  # user_data = <<-EOF
+  #             #!/bin/bash
+  #             yum install -y aws-cli
+  #             echo "EC2 S3 Logging Test by Aarush" > /tmp/log_test.txt
+  #             aws s3 cp /tmp/log_test.txt s3://${aws_s3_bucket.my_bucket.bucket}/log_test.txt
+  #             EOF
 }
+
 
 #Generate random id to ensure bucket name is unqiue
 resource "random_id" "suffix" {
@@ -133,7 +171,71 @@ resource "aws_s3_bucket_public_access_block" "public_access" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+resource "aws_s3_bucket" "log_bucket" {
+  bucket = "s3-logs-${random_id.suffix.hex}"
+}
+
+resource "aws_s3_bucket_versioning" "log_bucket_versioning" {
+  bucket = aws_s3_bucket.log_bucket.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "log_bucket_encryption" {
+  bucket = aws_s3_bucket.log_bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "log_bucket_public_access" {
+  bucket                  = aws_s3_bucket.log_bucket.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_policy" "log_delivery_policy" {
+  bucket = aws_s3_bucket.log_bucket.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AllowS3Logging",
+        Effect = "Allow",
+        Principal : {
+          Service : "logging.s3.amazonaws.com"
+        },
+        Action   = "s3:PutObject",
+        Resource = "${aws_s3_bucket.log_bucket.arn}/s3-logs/*",
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_logging" "logging" {
+  bucket        = aws_s3_bucket.my_bucket.id
+  target_bucket = aws_s3_bucket.log_bucket.id
+  target_prefix = "s3-logs/"
+
+  depends_on = [
+    aws_s3_bucket_policy.log_delivery_policy
+  ]
+}
+
 #Printing the name of the source bucket
 output "bucket_name" {
   value = aws_s3_bucket.my_bucket.bucket
+}
+
+output "ec2_instance_id" {
+  value = aws_instance.ec2.id
 }
