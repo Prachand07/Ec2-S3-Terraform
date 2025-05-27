@@ -28,36 +28,63 @@ resource "aws_subnet" "private" {
   availability_zone       = var.availability_zone
 }
 
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = var.availability_zone
+}
+
+#Creating a IGW
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public.id
+  depends_on    = [aws_internet_gateway.igw]
+}
+
 # Creating a Route Table
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
   tags = {
-    Name = "My route table"
+    Name = "pvt-route-table"
+  }
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
   }
 }
 
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "public-route-table"
+  }
+}
+
+#Associating public route table to public subnet
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+#Associating private route table to private subnet
 resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private.id
   route_table_id = aws_route_table.private.id
-}
-
-resource "aws_vpc_endpoint" "connect" {
-  vpc_id          = aws_vpc.main.id
-  service_name    = "com.amazonaws.${var.region}.s3"
-  route_table_ids = [aws_route_table.private.id]
-}
-
-# Security Group
-resource "aws_security_group" "ec2_sg" {
-  name   = "ec2_private_sg"
-  vpc_id = aws_vpc.main.id
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 }
 
 #Creating IAM Roles
@@ -117,7 +144,47 @@ resource "local_file" "private_key" {
   file_permission = "0400"
 }
 
-# Creating the ec2 instance
+# Security Group for private instance
+resource "aws_security_group" "ec2_sg" {
+  name   = "ec2_private_sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg.id]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+#Creating a bastion host, so that it's possible to ssh into private instance
+#Firstly we'll create a security group for the bastion instance
+resource "aws_security_group" "bastion_sg" {
+  name   = "bastion_sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # We need to use our own ip, but here for demo, keeping it open.
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Creating the private ec2 instance
 resource "aws_instance" "ec2" {
   ami                         = var.ami_id
   instance_type               = var.ec2_type
@@ -138,6 +205,19 @@ resource "aws_instance" "ec2" {
   #             EOF
 }
 
+#Creating bastion host
+resource "aws_instance" "bastion" {
+  ami                         = var.ami_id
+  instance_type               = var.ec2_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.my_key.key_name
+
+  tags = {
+    Name = "Bastion-instance"
+  }
+}
 
 #Generate random id to ensure bucket name is unqiue
 resource "random_id" "suffix" {
@@ -238,4 +318,8 @@ output "bucket_name" {
 
 output "ec2_instance_id" {
   value = aws_instance.ec2.id
+}
+
+output "bastion_public_ip" {
+  value = aws_instance.bastion.public_ip
 }

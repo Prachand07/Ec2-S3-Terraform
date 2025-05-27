@@ -7,18 +7,21 @@ This code provisions a basic AWS infrastructure setup, including a private EC2 i
 
 1. **A custom VPC** with CIDR block `10.0.0.0/16`.
 2. **A private subnet** (`10.0.1.0/24`) in a user-defined availability zone.
-3. **A route table and its association** (no Internet Gateway or NAT, hence private-only access).
-4. **A security group** that allows only outbound traffic.
-5. **Secure Access to S3**: S3 VPC endpoint is used to access S3 privately without needing a NAT Gateway.
-6. **Secure SSH Key**: A TLS-generated private key is saved securely with 0400 permissions.
-7. **No Credentials**: No secrets or keys are hardcoded; all permissions handled via IAM roles.
-8. **An EC2 instance** with no public IP in the private subnet.
-9. **A secure S3 bucket** with:
+3. **A public subnet** (`10.0.2.0/24`) in a user-defined availability zone.
+4. **Route tables and its associations** 
+5. **Security groups** that allows traffic to the instances.
+6. **Internet Gateway** configured to allow us to connect with outside world
+7. **NAT Gateway** launched in public subnet
+7. **Secure SSH Key**: A TLS-generated private key is saved securely with 0400 permissions.
+9. **No Credentials**: No secrets or keys are hardcoded; all permissions handled via IAM roles.
+10. **An EC2 instance** with no public IP in the private subnet.
+11. **An EC2 instance** in public subnet, that helps in accessing private subnet instance
+12. **A secure S3 bucket** with:
    - Versioning enabled
    - Server-side encryption (SSE) using AES256
    - Public access completely blocked
    - A unique name using a random suffix
-10. **An output** displaying the final S3 bucket and instance name
+13. **An output** displaying the final S3 bucket and instance name and bastion instance ip address
 
 ---
 
